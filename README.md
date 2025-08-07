@@ -63,13 +63,13 @@ aws cloudformation deploy \
 
 ### What Happens in Each Phase?
 
-**Phase 1 Success:**
+**Phase 1**
 - ✅ VPC, subnets, NAT gateway, security groups
 - ✅ Basic IAM roles (cluster and node group)
 - ✅ EKS cluster creation (with automatic OIDC issuer)
 - ❌ IRSA roles fail (EBS CSI, Load Balancer Controller)
 
-**Phase 2 Success:**
+**Phase 2**
 - ✅ IRSA roles (now OIDC provider exists)
 - ✅ EBS CSI driver add-on
 - ✅ Complete infrastructure ready
@@ -78,6 +78,37 @@ aws cloudformation deploy \
 
 ```bash
 aws eks update-kubeconfig --region us-west-1 --name federal-ps-eks-cluster
+```
+
+## Apply Admin Access (Required for Node Group)
+
+The `aws-auth` ConfigMap needs to be updated with the correct IAM role ARN for your worker nodes:
+
+```bash
+# 1. Get the actual node group IAM role ARN
+NODE_ROLE_ARN=$(aws eks describe-nodegroup \
+  --cluster-name federal-ps-eks-cluster \
+  --nodegroup-name federal-ps-eks-cluster-NodeGroup \
+  --region us-west-1 \
+  --query 'nodegroup.nodeRole' \
+  --output text)
+
+echo "Node Role ARN: $NODE_ROLE_ARN"
+
+# 2. Update the aws-auth-edit.yaml file with the correct role ARN
+sed -i.bak "s|rolearn: arn:aws:iam::[0-9]*:role/.*|rolearn: $NODE_ROLE_ARN|" aws-auth-edit.yaml
+
+# 3. Apply the corrected aws-auth ConfigMap
+kubectl apply -f aws-auth-edit.yaml -n kube-system
+
+# 4. Verify nodes are ready (may take 1-2 minutes)
+kubectl get nodes
+```
+
+## Apply Storage Class
+
+```bash
+kubectl apply -f gp3-sc.yaml
 ```
 
 ## Install AWS Load Balancer Controller (Helm)
@@ -99,18 +130,6 @@ helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
 
 # Verify installation
 kubectl get deployment -n kube-system aws-load-balancer-controller
-```
-
-## Apply Storage Class
-
-```bash
-kubectl apply -f gp3-sc.yaml
-```
-
-## Apply Admin Access (Optional)
-
-```bash
-kubectl apply -f aws-auth-edit.yaml
 ```
 
 ## What's Included
@@ -135,41 +154,6 @@ kubectl apply -f aws-auth-edit.yaml
 - **IRSA**: IAM Roles for Service Accounts for secure authentication
 - **Consistent Tagging**: All resources tagged with environment and management info
 
-## Troubleshooting
-
-### Common Issues
-
-**OIDC Provider Already Exists**
-If you get an error that the OIDC provider already exists during Phase 1:
-```bash
-# Check existing OIDC providers
-aws iam list-open-id-connect-providers
-
-# If it exists, skip the eksctl command and proceed to Phase 2
-```
-
-**Role Assumption Errors**
-If you see role assumption errors after deployment:
-```bash
-# Verify OIDC provider is correctly associated
-eksctl utils describe-addon-iamserviceaccount --cluster federal-ps-eks-cluster --region us-west-1
-```
-
-## Alternative Manual OIDC Setup
-
-If you prefer not to use eksctl for OIDC provider creation:
-
-```bash
-# Get OIDC issuer URL (after cluster creation)
-OIDC_ISSUER=$(aws eks describe-cluster --name federal-ps-eks-cluster --query "cluster.identity.oidc.issuer" --output text --region us-west-1)
-
-# Create OIDC identity provider manually
-aws iam create-open-id-connect-provider \
-  --url $OIDC_ISSUER \
-  --client-id-list sts.amazonaws.com \
-  --thumbprint-list 9e99a48a9960b14926bb7f3b02e22da2b0ab7280 \
-  --region us-west-1
-```
 
 ## Notes
 
@@ -178,3 +162,4 @@ aws iam create-open-id-connect-provider \
 - All IAM roles use IRSA (no stored credentials)
 - Resources are protected from accidental deletion
 - Two-phase deployment is required due to CloudFormation limitations with OIDC providers
+- **Important**: Always update `aws-auth-edit.yaml` with the correct IAM role ARN before applying
