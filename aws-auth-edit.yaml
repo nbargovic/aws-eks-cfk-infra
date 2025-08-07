@@ -1,0 +1,26 @@
+apiVersion: v1
+data:
+  mapRoles: |
+    - groups:
+      - system:bootstrappers
+      - system:nodes
+      rolearn: arn:aws:iam::492737776546:role/federal-ps-eks-EKSNodeInstanceRole-8P3qJDRAaSQG
+      username: system:node:{{EC2PrivateDNSName}}
+  mapUsers: |
+    - userarn: arn:aws:iam::492737776546:user/nbargovic
+      username: nbargovic
+      groups:
+      - system:masters
+    - userarn: arn:aws:iam::492737776546:user/naraja
+      username: naraja
+      groups:
+      - system:masters
+    - userarn: arn:aws:iam::492737776546:user/cstevenson
+      username: cstevenson
+      groups:
+      - system:masters      
+kind: ConfigMap
+metadata:
+  name: aws-auth
+  namespace: kube-system
+

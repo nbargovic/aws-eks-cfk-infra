@@ -1,0 +1,917 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: AWS CloudFormation template to create an Amazon EKS Cluster
+
+Parameters:
+  ClusterName:
+    Type: String
+    Default: federal-ps-eks-cluster
+    Description: The name of the EKS cluster.
+  VpcBlock:
+    Type: String
+    Default: 10.0.0.0/16
+    Description: The IP address range for the VPC.
+  PublicSubnet1Block:
+    Type: String
+    Default: 10.0.0.0/19
+    Description: The IP address range for Public Subnet 1.
+  PublicSubnet2Block:
+    Type: String
+    Default: 10.0.32.0/19
+    Description: The IP address range for Public Subnet 2.
+  PrivateSubnet1Block:
+    Type: String
+    Default: 10.0.64.0/19
+    Description: The IP address range for Private Subnet 1.
+  PrivateSubnet2Block:
+    Type: String
+    Default: 10.0.96.0/19
+    Description: The IP address range for Private Subnet 2.
+  InstanceType:
+    Type: String
+    Default: t3.2xlarge
+    Description: The EC2 instance type for the EKS worker nodes.
+  DesiredCapacity:
+    Type: Number
+    Default: 3
+    Description: The desired number of worker nodes in the EKS cluster.
+  MinCapacity:
+    Type: Number
+    Default: 3
+    Description: The minimum number of worker nodes in the EKS cluster.
+  MaxCapacity:
+    Type: Number
+    Default: 8
+    Description: The maximum number of worker nodes in the EKS cluster.
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instances.
+
+Resources:
+  # VPC for the EKS Cluster
+  VPC:
+    Type: AWS::EC2::VPC
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      CidrBlock: !Ref VpcBlock
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${ClusterName}-VPC
+        - Key: cflt_environment
+          Value: dev
+        - Key: cflt_service
+          Value: federal_ps
+        - Key: cflt_keep_until
+          Value: forever
+        - Key: cflt_managed_by
+          Value: user
+        - Key: cflt_managed_id
+          Value: nbargovic
+
+  # Internet Gateway for public subnet access
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub ${ClusterName}-IGW
+        - Key: cflt_environment
+          Value: dev
+        - Key: cflt_service
+          Value: federal_ps
+        - Key: cflt_keep_until
+          Value: forever
+        - Key: cflt_managed_by
+          Value: user
+        - Key: cflt_managed_id
+          Value: nbargovic
+
+  # Attach Internet Gateway to VPC
+  VPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  # Public Subnets
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PublicSubnet1Block
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${ClusterName}-PublicSubnet1
+        - Key: kubernetes.io/cluster/${ClusterName}
+          Value: shared
+        - Key: kubernetes.io/role/elb
+          Value: 1
+        - Key: cflt_environment
+          Value: dev
+        - Key: cflt_service
+          Value: federal_ps
+        - Key: cflt_keep_until
+          Value: forever
+        - Key: cflt_managed_by
+          Value: user
+        - Key: cflt_managed_id
+          Value: nbargovic
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PublicSubnet2Block
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${ClusterName}-PublicSubnet2
+        - Key: kubernetes.io/cluster/${ClusterName}
+          Value: shared
+        - Key: kubernetes.io/role/elb
+          Value: 1
+        - Key: cflt_environment
+          Value: dev
+        - Key: cflt_service
+          Value: federal_ps
+        - Key: cflt_keep_until
+          Value: forever
+        - Key: cflt_managed_by
+          Value: user
+        - Key: cflt_managed_id
+          Value: nbargovic
+
+  # Private Subnets
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PrivateSubnet1Block
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      Tags:
+        - Key: Name
+          Value: !Sub ${ClusterName}-PrivateSubnet1
+        - Key: kubernetes.io/cluster/${ClusterName}
+          Value: shared
+        - Key: kubernetes.io/role/internal-elb
+          Value: 1
+        - Key: cflt_environment
+          Value: dev
+        - Key: cflt_service
+          Value: federal_ps
+        - Key: cflt_keep_until
+          Value: forever
+        - Key: cflt_managed_by
+          Value: user
+        - Key: cflt_managed_id
+          Value: nbargovic
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PrivateSubnet2Block
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      Tags:
+        - Key: Name
+          Value: !Sub ${ClusterName}-PrivateSubnet2
+        - Key: kubernetes.io/cluster/${ClusterName}
+          Value: shared
+        - Key: kubernetes.io/role/internal-elb
+          Value: 1
+        - Key: cflt_environment
+          Value: dev
+        - Key: cflt_service
+          Value: federal_ps
+        - Key: cflt_keep_until
+          Value: forever
+        - Key: cflt_managed_by
+          Value: user
+        - Key: cflt_managed_id
+          Value: nbargovic
+
+  # Route Table for Public Subnets
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${ClusterName}-PublicRouteTable
+        - Key: cflt_environment
+          Value: dev
+        - Key: cflt_service
+          Value: federal_ps
+        - Key: cflt_keep_until
+          Value: forever
+        - Key: cflt_managed_by
+          Value: user
+        - Key: cflt_managed_id
+          Value: nbargovic
+
+  # Route to Internet Gateway for Public Subnets
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VPCGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  # Associate Public Subnets with Public Route Table
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicRouteTable
+
+  # Elastic IP for NAT Gateway
+  NatGatewayEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub ${ClusterName}-NatGatewayEIP
+        - Key: cflt_environment
+          Value: dev
+        - Key: cflt_service
+          Value: federal_ps
+        - Key: cflt_keep_until
+          Value: forever
+        - Key: cflt_managed_by
+          Value: user
+        - Key: cflt_managed_id
+          Value: nbargovic
+
+  # NAT Gateway
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGatewayEIP.AllocationId
+      SubnetId: !Ref PublicSubnet1
+      Tags:
+        - Key: Name
+          Value: !Sub ${ClusterName}-NatGateway
+        - Key: cflt_environment
+          Value: dev
+        - Key: cflt_service
+          Value: federal_ps
+        - Key: cflt_keep_until
+          Value: forever
+        - Key: cflt_managed_by
+          Value: user
+        - Key: cflt_managed_id
+          Value: nbargovic
+
+  # Private Route Table 1
+  PrivateRouteTable1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${ClusterName}-PrivateRouteTable1
+        - Key: cflt_environment
+          Value: dev
+        - Key: cflt_service
+          Value: federal_ps
+        - Key: cflt_keep_until
+          Value: forever
+        - Key: cflt_managed_by
+          Value: user
+        - Key: cflt_managed_id
+          Value: nbargovic
+
+  # Route for Private Route Table 1 to NAT Gateway
+  PrivateRoute1Route:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable1
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+
+  # Associate Private Subnet 1 with Private Route Table 1
+  PrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet1
+      RouteTableId: !Ref PrivateRouteTable1
+
+  # Private Route Table 2
+  PrivateRouteTable2:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${ClusterName}-PrivateRouteTable2
+        - Key: cflt_environment
+          Value: dev
+        - Key: cflt_service
+          Value: federal_ps
+        - Key: cflt_keep_until
+          Value: forever
+        - Key: cflt_managed_by
+          Value: user
+        - Key: cflt_managed_id
+          Value: nbargovic
+
+  # Route for Private Route Table 2 to NAT Gateway
+  PrivateRoute2Route:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable2
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+
+  # Associate Private Subnet 2 with Private Route Table 2
+  PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet2
+      RouteTableId: !Ref PrivateRouteTable2
+
+  # EKS Cluster IAM Role
+  EKSClusterRole:
+    Type: AWS::IAM::Role
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: eks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
+        - arn:aws:iam::aws:policy/AmazonEKSVPCResourceController
+      Tags:
+        - Key: Name
+          Value: !Sub ${ClusterName}-EKSClusterRole
+        - Key: cflt_environment
+          Value: dev
+        - Key: cflt_service
+          Value: federal_ps
+        - Key: cflt_keep_until
+          Value: forever
+        - Key: cflt_managed_by
+          Value: user
+        - Key: cflt_managed_id
+          Value: nbargovic
+
+  # EKS Node Group IAM Role
+  EKSNodeInstanceRole:
+    Type: AWS::IAM::Role
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+        - arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
+      Tags:
+        - Key: Name
+          Value: !Sub ${ClusterName}-NodeInstanceRole
+        - Key: cflt_environment
+          Value: dev
+        - Key: cflt_service
+          Value: federal_ps
+        - Key: cflt_keep_until
+          Value: forever
+        - Key: cflt_managed_by
+          Value: user
+        - Key: cflt_managed_id
+          Value: nbargovic
+
+  # EKS Cluster Security Group
+  ClusterSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for the EKS cluster
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${ClusterName}-ClusterSecurityGroup
+        - Key: cflt_environment
+          Value: dev
+        - Key: cflt_service
+          Value: federal_ps
+        - Key: cflt_keep_until
+          Value: forever
+        - Key: cflt_managed_by
+          Value: user
+        - Key: cflt_managed_id
+          Value: nbargovic
+
+  # EKS Worker Node Security Group
+  NodeSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for the EKS worker nodes
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${ClusterName}-NodeSecurityGroup
+        - Key: cflt_environment
+          Value: dev
+        - Key: cflt_service
+          Value: federal_ps
+        - Key: cflt_keep_until
+          Value: forever
+        - Key: cflt_managed_by
+          Value: user
+        - Key: cflt_managed_id
+          Value: nbargovic
+
+  # Allow inbound traffic from worker nodes to the cluster
+  IngressFromWorkerNodesToCluster:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !GetAtt ClusterSecurityGroup.GroupId
+      SourceSecurityGroupId: !GetAtt NodeSecurityGroup.GroupId
+      IpProtocol: -1 # All protocols
+      FromPort: -1
+      ToPort: -1
+
+  # Allow inbound traffic from cluster to worker nodes
+  IngressFromClusterToWorkerNodes:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !GetAtt NodeSecurityGroup.GroupId
+      SourceSecurityGroupId: !GetAtt ClusterSecurityGroup.GroupId
+      IpProtocol: -1 # All protocols
+      FromPort: -1
+      ToPort: -1
+
+  # Allow all outbound traffic from worker nodes
+  EgressToAnywhereFromWorkerNodes:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !GetAtt NodeSecurityGroup.GroupId
+      IpProtocol: -1
+      CidrIp: 0.0.0.0/0
+      FromPort: -1
+      ToPort: -1
+
+  # EKS Cluster
+  EKSCluster:
+    Type: AWS::EKS::Cluster
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Name: !Ref ClusterName
+      RoleArn: !GetAtt EKSClusterRole.Arn
+      Version: "1.33" # MODIFIED to the latest K8s version 1.33
+      ResourcesVpcConfig:
+        SecurityGroupIds:
+          - !GetAtt ClusterSecurityGroup.GroupId
+        SubnetIds:
+          - !Ref PrivateSubnet1
+          - !Ref PrivateSubnet2
+          - !Ref PublicSubnet1
+          - !Ref PublicSubnet2
+      Tags:
+        - Key: Name
+          Value: !Sub ${ClusterName}-EKSCluster
+        - Key: cflt_environment
+          Value: dev
+        - Key: cflt_service
+          Value: federal_ps
+        - Key: cflt_keep_until
+          Value: forever
+        - Key: cflt_managed_by
+          Value: user
+        - Key: cflt_managed_id
+          Value: nbargovic
+
+  # EKS Node Group
+  EKSNodeGroup:
+    Type: AWS::EKS::Nodegroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      ClusterName: !Ref EKSCluster
+      NodegroupName: !Sub ${ClusterName}-NodeGroup
+      NodeRole: !GetAtt EKSNodeInstanceRole.Arn
+      Subnets:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      InstanceTypes:
+        - !Ref InstanceType
+      ScalingConfig:
+        DesiredSize: !Ref DesiredCapacity
+        MinSize: !Ref MinCapacity
+        MaxSize: !Ref MaxCapacity
+      RemoteAccess:
+        Ec2SshKey: !Ref KeyName
+        SourceSecurityGroups:
+          - !GetAtt NodeSecurityGroup.GroupId
+      AmiType: BOTTLEROCKET_x86_64_FIPS
+      Tags:
+        Name: !Sub ${ClusterName}-NodeGroup
+        cflt_environment: dev
+        cflt_service: federal_ps
+        cflt_keep_until: forever
+        cflt_managed_by: user
+        cflt_managed_id: nbargovic
+
+  # IAM Role for EBS CSI Driver
+  EBSCSIDriverRole:
+    Type: AWS::IAM::Role
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      RoleName: !Sub ${ClusterName}-EBS-CSI-DriverRole
+      AssumeRolePolicyDocument:
+        !Sub |
+          {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Principal": {
+                  "Federated": "arn:aws:iam::${AWS::AccountId}:oidc-provider/${EKSCluster.OpenIdConnectIssuerUrl}"
+                },
+                "Action": "sts:AssumeRoleWithWebIdentity",
+                "Condition": {
+                  "StringEquals": {
+                    "${EKSCluster.OpenIdConnectIssuerUrl}:aud": "sts.amazonaws.com",
+                    "${EKSCluster.OpenIdConnectIssuerUrl}:sub": "system:serviceaccount:kube-system:ebs-csi-controller-sa"
+                  }
+                }
+              }
+            ]
+          }
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy
+      Tags:
+        - Key: Name
+          Value: !Sub ${ClusterName}-EBS-CSI-DriverRole
+        - Key: cflt_environment
+          Value: dev
+        - Key: cflt_service
+          Value: federal_ps
+        - Key: cflt_keep_until
+          Value: forever
+        - Key: cflt_managed_by
+          Value: user
+        - Key: cflt_managed_id
+          Value: nbargovic
+
+  # EBS CSI Driver Add-on
+  EBSCSIDriverAddon:
+    Type: AWS::EKS::Addon
+    DependsOn: 
+      - EKSNodeGroup
+      - EBSCSIDriverRole
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      ClusterName: !Ref EKSCluster
+      AddonName: aws-ebs-csi-driver
+      ServiceAccountRoleArn: !GetAtt EBSCSIDriverRole.Arn
+      ResolveConflicts: OVERWRITE
+      Tags:
+        - Key: Name
+          Value: !Sub ${ClusterName}-EBS-CSI-Driver
+        - Key: cflt_environment
+          Value: dev
+        - Key: cflt_service
+          Value: federal_ps
+        - Key: cflt_keep_until
+          Value: forever
+        - Key: cflt_managed_by
+          Value: user
+        - Key: cflt_managed_id
+          Value: nbargovic
+
+  # IAM Policy for AWS Load Balancer Controller
+  AWSLoadBalancerControllerPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      ManagedPolicyName: !Sub ${ClusterName}-AWSLoadBalancerControllerIAMPolicy
+      Description: IAM policy for AWS Load Balancer Controller
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - iam:CreateServiceLinkedRole
+            Resource: "*"
+            Condition:
+              StringEquals:
+                iam:AWSServiceName: elasticloadbalancing.amazonaws.com
+          - Effect: Allow
+            Action:
+              - ec2:DescribeAccountAttributes
+              - ec2:DescribeAddresses
+              - ec2:DescribeAvailabilityZones
+              - ec2:DescribeInternetGateways
+              - ec2:DescribeVpcs
+              - ec2:DescribeVpcPeeringConnections
+              - ec2:DescribeSubnets
+              - ec2:DescribeSecurityGroups
+              - ec2:DescribeInstances
+              - ec2:DescribeNetworkInterfaces
+              - ec2:DescribeTags
+              - ec2:GetCoipPoolUsage
+              - ec2:GetSecurityGroupsForVpc
+            Resource: "*"
+          - Effect: Allow
+            Action:
+              - ec2:CreateSecurityGroup
+            Resource: "*"
+          - Effect: Allow
+            Action:
+              - ec2:CreateTags
+            Resource: arn:aws:ec2:*:*:security-group/*
+            Condition:
+              StringEquals:
+                ec2:CreateAction: CreateSecurityGroup
+              'Null':
+                aws:RequestTag/elbv2.k8s.aws/cluster: 'false'
+          - Effect: Allow
+            Action:
+              - ec2:CreateTags
+              - ec2:DeleteTags
+            Resource: arn:aws:ec2:*:*:security-group/*
+            Condition:
+              'Null':
+                aws:RequestTag/elbv2.k8s.aws/cluster: 'true'
+                aws:ResourceTag/elbv2.k8s.aws/cluster: 'false'
+          - Effect: Allow
+            Action:
+              - ec2:AuthorizeSecurityGroupIngress
+              - ec2:RevokeSecurityGroupIngress
+              - ec2:DeleteSecurityGroup
+            Resource: "*"
+            Condition:
+              'Null':
+                aws:ResourceTag/elbv2.k8s.aws/cluster: 'false'
+          - Effect: Allow
+            Action:
+              - elasticloadbalancing:CreateLoadBalancer
+              - elasticloadbalancing:CreateTargetGroup
+            Resource: "*"
+            Condition:
+              'Null':
+                aws:RequestTag/elbv2.k8s.aws/cluster: 'false'
+          - Effect: Allow
+            Action:
+              - elasticloadbalancing:CreateListener
+              - elasticloadbalancing:DeleteListener
+              - elasticloadbalancing:CreateRule
+              - elasticloadbalancing:DeleteRule
+            Resource: "*"
+          - Effect: Allow
+            Action:
+              - elasticloadbalancing:AddTags
+              - elasticloadbalancing:RemoveTags
+            Resource:
+              - arn:aws:elasticloadbalancing:*:*:targetgroup/*/*
+              - arn:aws:elasticloadbalancing:*:*:loadbalancer/net/*/*
+              - arn:aws:elasticloadbalancing:*:*:loadbalancer/app/*/*
+            Condition:
+              'Null':
+                aws:RequestTag/elbv2.k8s.aws/cluster: 'true'
+                aws:ResourceTag/elbv2.k8s.aws/cluster: 'false'
+          - Effect: Allow
+            Action:
+              - elasticloadbalancing:AddTags
+              - elasticloadbalancing:RemoveTags
+            Resource:
+              - arn:aws:elasticloadbalancing:*:*:listener/net/*/*/*
+              - arn:aws:elasticloadbalancing:*:*:listener/app/*/*/*
+              - arn:aws:elasticloadbalancing:*:*:listener-rule/net/*/*/*
+              - arn:aws:elasticloadbalancing:*:*:listener-rule/app/*/*/*
+          - Effect: Allow
+            Action:
+              - elasticloadbalancing:ModifyLoadBalancerAttributes
+              - elasticloadbalancing:SetIpAddressType
+              - elasticloadbalancing:SetSecurityGroups
+              - elasticloadbalancing:SetSubnets
+              - elasticloadbalancing:DeleteLoadBalancer
+              - elasticloadbalancing:ModifyTargetGroup
+              - elasticloadbalancing:ModifyTargetGroupAttributes
+              - elasticloadbalancing:DeleteTargetGroup
+            Resource: "*"
+            Condition:
+              'Null':
+                aws:ResourceTag/elbv2.k8s.aws/cluster: 'false'
+          - Effect: Allow
+            Action:
+              - elasticloadbalancing:AddTags
+            Resource:
+              - arn:aws:elasticloadbalancing:*:*:targetgroup/*/*
+              - arn:aws:elasticloadbalancing:*:*:loadbalancer/net/*/*
+              - arn:aws:elasticloadbalancing:*:*:loadbalancer/app/*/*
+            Condition:
+              StringEquals:
+                elasticloadbalancing:CreateAction:
+                  - CreateTargetGroup
+                  - CreateLoadBalancer
+              'Null':
+                aws:RequestTag/elbv2.k8s.aws/cluster: 'false'
+          - Effect: Allow
+            Action:
+              - elasticloadbalancing:RegisterTargets
+              - elasticloadbalancing:DeregisterTargets
+            Resource: arn:aws:elasticloadbalancing:*:*:targetgroup/*/*
+          - Effect: Allow
+            Action:
+              - elasticloadbalancing:DescribeLoadBalancers
+              - elasticloadbalancing:DescribeLoadBalancerAttributes
+              - elasticloadbalancing:DescribeListeners
+              - elasticloadbalancing:DescribeListenerCertificates
+              - elasticloadbalancing:DescribeSSLPolicies
+              - elasticloadbalancing:DescribeRules
+              - elasticloadbalancing:DescribeTargetGroups
+              - elasticloadbalancing:DescribeTargetGroupAttributes
+              - elasticloadbalancing:DescribeTargetHealth
+              - elasticloadbalancing:DescribeTags
+            Resource: "*"
+          - Effect: Allow
+            Action:
+              - cognito-idp:DescribeUserPoolClient
+              - acm:ListCertificates
+              - acm:DescribeCertificate
+              - iam:ListServerCertificates
+              - iam:GetServerCertificate
+              - waf-regional:GetWebACL
+              - waf-regional:GetWebACLForResource
+              - waf-regional:AssociateWebACL
+              - waf-regional:DisassociateWebACL
+              - wafv2:GetWebACL
+              - wafv2:GetWebACLForResource
+              - wafv2:AssociateWebACL
+              - wafv2:DisassociateWebACL
+              - shield:DescribeProtection
+              - shield:GetSubscriptionState
+              - shield:DescribeSubscription
+              - shield:CreateProtection
+              - shield:DeleteProtection
+            Resource: "*"
+          - Effect: Allow
+            Action:
+              - ec2:DescribeVpcPeeringConnections
+              - ec2:DescribeCoipPools
+              - ec2:GetCoipPoolUsage
+              - ec2:DescribeLocalGatewayRouteTablesVpcAssociations
+              - ec2:DescribeLocalGatewayRouteTables
+              - ec2:DescribeLocalGateways
+              - ec2:DescribeLocalGatewayRouteTableVirtualInterfaceGroupAssociations
+              - ec2:DescribeLocalGatewayVirtualInterfaceGroups
+              - ec2:DescribeLocalGatewayVirtualInterfaces
+              - ec2:DescribeCarrierGateways
+            Resource: "*"
+
+  # IAM Role for AWS Load Balancer Controller
+  AWSLoadBalancerControllerRole:
+    Type: AWS::IAM::Role
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      RoleName: !Sub ${ClusterName}-AWSLoadBalancerControllerRole
+      AssumeRolePolicyDocument:
+        !Sub |
+          {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Principal": {
+                  "Federated": "arn:aws:iam::${AWS::AccountId}:oidc-provider/${EKSCluster.OpenIdConnectIssuerUrl}"
+                },
+                "Action": "sts:AssumeRoleWithWebIdentity",
+                "Condition": {
+                  "StringEquals": {
+                    "${EKSCluster.OpenIdConnectIssuerUrl}:aud": "sts.amazonaws.com",
+                    "${EKSCluster.OpenIdConnectIssuerUrl}:sub": "system:serviceaccount:kube-system:aws-load-balancer-controller"
+                  }
+                }
+              }
+            ]
+          }
+      ManagedPolicyArns:
+        - !Ref AWSLoadBalancerControllerPolicy
+      Tags:
+        - Key: Name
+          Value: !Sub ${ClusterName}-AWSLoadBalancerControllerRole
+        - Key: cflt_environment
+          Value: dev
+        - Key: cflt_service
+          Value: federal_ps
+        - Key: cflt_keep_until
+          Value: forever
+        - Key: cflt_managed_by
+          Value: user
+        - Key: cflt_managed_id
+          Value: nbargovic
+
+Outputs:
+  VpcId:
+    Description: The ID of the VPC
+    Value: !Ref VPC
+    Export:
+      Name: !Sub ${ClusterName}-VpcId
+
+  PublicSubnet1Id:
+    Description: The ID of Public Subnet 1
+    Value: !Ref PublicSubnet1
+    Export:
+      Name: !Sub ${ClusterName}-PublicSubnet1Id
+
+  PublicSubnet2Id:
+    Description: The ID of Public Subnet 2
+    Value: !Ref PublicSubnet2
+    Export:
+      Name: !Sub ${ClusterName}-PublicSubnet2Id
+
+  PrivateSubnet1Id:
+    Description: The ID of Private Subnet 1
+    Value: !Ref PrivateSubnet1
+    Export:
+      Name: !Sub ${ClusterName}-PrivateSubnet1Id
+
+  PrivateSubnet2Id:
+    Description: The ID of Private Subnet 2
+    Value: !Ref PrivateSubnet2
+    Export:
+      Name: !Sub ${ClusterName}-PrivateSubnet2Id
+
+  EKSClusterName:
+    Description: The name of the EKS Cluster
+    Value: !Ref EKSCluster
+    Export:
+      Name: !Sub ${ClusterName}-EKSClusterName
+
+  EKSClusterEndpoint:
+    Description: The endpoint of the EKS Cluster
+    Value: !GetAtt EKSCluster.Endpoint
+    Export:
+      Name: !Sub ${ClusterName}-EKSClusterEndpoint
+
+  EKSClusterArn:
+    Description: The ARN of the EKS Cluster
+    Value: !GetAtt EKSCluster.Arn
+    Export:
+      Name: !Sub ${ClusterName}-EKSClusterArn
+
+  EKSNodeInstanceRoleArn:
+    Description: The ARN of the EKS Node Instance Role
+    Value: !GetAtt EKSNodeInstanceRole.Arn
+    Export:
+      Name: !Sub ${ClusterName}-EKSNodeInstanceRoleArn
+
+  EBSCSIDriverRoleArn:
+    Description: The ARN of the EBS CSI Driver IAM Role
+    Value: !GetAtt EBSCSIDriverRole.Arn
+    Export:
+      Name: !Sub ${ClusterName}-EBSCSIDriverRoleArn
+
+  EKSClusterOIDCIssuer:
+    Description: The OIDC Issuer URL for the EKS Cluster
+    Value: !GetAtt EKSCluster.OpenIdConnectIssuerUrl
+    Export:
+      Name: !Sub ${ClusterName}-OIDCIssuer
+
+  EBSCSIDriverAddonName:
+    Description: The name of the EBS CSI Driver Add-on
+    Value: !Ref EBSCSIDriverAddon
+    Export:
+      Name: !Sub ${ClusterName}-EBSCSIDriverAddon
+
+  AWSLoadBalancerControllerRoleArn:
+    Description: The ARN of the AWS Load Balancer Controller IAM Role
+    Value: !GetAtt AWSLoadBalancerControllerRole.Arn
+    Export:
+      Name: !Sub ${ClusterName}-AWSLoadBalancerControllerRoleArn
+
+  AWSLoadBalancerControllerPolicyArn:
+    Description: The ARN of the AWS Load Balancer Controller IAM Policy
+    Value: !Ref AWSLoadBalancerControllerPolicy
+    Export:
+      Name: !Sub ${ClusterName}-AWSLoadBalancerControllerPolicyArn
