@@ -153,7 +153,11 @@ kubectl get deployment -n kube-system aws-load-balancer-controller
 - **Resource Protection**: Critical resources have DeletionPolicy: Retain
 - **IRSA**: IAM Roles for Service Accounts for secure authentication
 - **Consistent Tagging**: All resources tagged with environment and management info
+- **Auto-tagging**: EKS-managed security group automatically tagged for Load Balancer Controller
 
+### Load Balancer Support
+- **Automatic Security Group Tagging**: Lambda function automatically tags EKS-managed security group with `elbv2.k8s.aws/cluster` tag
+- **Ready for LoadBalancer Services**: No manual security group configuration needed for Kafka or other LoadBalancer services
 
 ## Notes
 
@@ -162,4 +166,5 @@ kubectl get deployment -n kube-system aws-load-balancer-controller
 - All IAM roles use IRSA (no stored credentials)
 - Resources are protected from accidental deletion
 - Two-phase deployment is required due to CloudFormation limitations with OIDC providers
+- **EKS Security Group Auto-tagging**: Custom Lambda resource automatically tags the EKS-managed security group for Load Balancer Controller compatibility
 - **Important**: Always update `aws-auth-edit.yaml` with the correct IAM role ARN before applying

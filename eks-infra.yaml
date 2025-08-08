@@ -413,6 +413,8 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub ${ClusterName}-ClusterSecurityGroup
+        - Key: elbv2.k8s.aws/cluster
+          Value: !Ref ClusterName
         - Key: cflt_environment
           Value: dev
         - Key: cflt_service
@@ -433,6 +435,8 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub ${ClusterName}-NodeSecurityGroup
+        - Key: elbv2.k8s.aws/cluster
+          Value: !Ref ClusterName
         - Key: cflt_environment
           Value: dev
         - Key: cflt_service
@@ -832,6 +836,85 @@ Resources:
         - Key: cflt_managed_id
           Value: nbargovic
 
+  # Lambda function to tag EKS-managed security group
+  EKSSecurityGroupTaggerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: EKSSecurityGroupTaggerPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - eks:DescribeCluster
+                  - ec2:DescribeSecurityGroups
+                  - ec2:CreateTags
+                Resource: '*'
+
+  EKSSecurityGroupTaggerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${ClusterName}-SecurityGroupTagger
+      Runtime: python3.9
+      Handler: index.lambda_handler
+      Role: !GetAtt EKSSecurityGroupTaggerRole.Arn
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import cfnresponse
+          
+          def lambda_handler(event, context):
+              try:
+                  if event['RequestType'] == 'Delete':
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                      return
+                  
+                  cluster_name = event['ResourceProperties']['ClusterName']
+                  
+                  # Get EKS cluster details
+                  eks = boto3.client('eks')
+                  cluster = eks.describe_cluster(name=cluster_name)
+                  
+                  # Get the EKS-managed security group ID
+                  security_group_id = cluster['cluster']['resourcesVpcConfig']['clusterSecurityGroupId']
+                  
+                  # Tag the security group
+                  ec2 = boto3.client('ec2')
+                  ec2.create_tags(
+                      Resources=[security_group_id],
+                      Tags=[
+                          {
+                              'Key': 'elbv2.k8s.aws/cluster',
+                              'Value': cluster_name
+                          }
+                      ]
+                  )
+                  
+                  print(f"Successfully tagged security group {security_group_id} for cluster {cluster_name}")
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {'SecurityGroupId': security_group_id})
+                  
+              except Exception as e:
+                  print(f"Error: {str(e)}")
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {})
+
+  EKSSecurityGroupTagger:
+    Type: AWS::CloudFormation::CustomResource
+    DependsOn: EKSCluster
+    Properties:
+      ServiceToken: !GetAtt EKSSecurityGroupTaggerFunction.Arn
+      ClusterName: !Ref ClusterName
+
 Outputs:
   VpcId:
     Description: The ID of the VPC
@@ -916,3 +999,9 @@ Outputs:
     Value: !Ref AWSLoadBalancerControllerPolicy
     Export:
       Name: !Sub ${ClusterName}-AWSLoadBalancerControllerPolicyArn
+
+  EKSManagedSecurityGroupId:
+    Description: The ID of the EKS-managed security group (tagged for Load Balancer Controller)
+    Value: !GetAtt EKSSecurityGroupTagger.SecurityGroupId
+    Export:
+      Name: !Sub ${ClusterName}-EKSManagedSecurityGroupId
