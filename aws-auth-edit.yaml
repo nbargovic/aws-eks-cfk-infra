@@ -6,6 +6,10 @@ data:
       - system:nodes
       rolearn: arn:aws:iam::492737776546:role/federal-ps-eks-stack-EKSNodeInstanceRole-DOHAnliptvVW
       username: system:node:{{EC2PrivateDNSName}}
+    - groups:
+      - system:masters
+      rolearn: arn:aws:iam::492737776546:role/AWSReservedSSO_nonprod-administrator_6bbd747b1460f5f4
+      username: sso-admin
   mapUsers: |
     - userarn: arn:aws:iam::492737776546:user/nbargovic
       username: nbargovic
